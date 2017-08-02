@@ -4,6 +4,10 @@
 //TODO: create retry capability?
 //TODO: Error handling and remove throw on error
 
+//NOTE: Batch responses and nested requests via field expansion is possible
+//but difficult to implement (with error handling) and potentially confusing
+//if one of the ids is 'deleted'
+
 console.log('-Scraper Init-');
 //increaes threadpool size to enable better async threading(?)
 process.env.UV_THREADPOOL_SIZE = 128;
@@ -52,46 +56,40 @@ sqlcon.connect(function(err) {
 
 /****BEGIN FUNCTIONS****/
 
-// {
-//   "id": "759985267390294_1681300798592065",
-//   "reactions": {
-//     "data": [
-//     ],
-//     "summary": {
-//       "total_count": 105,
-//       "viewer_reaction": "NONE"
-//     }
-//   }
-// }
-
-//function to get number of likes given an ID.
+//function to get number of reactions given an ID.
 //callback(err, response);
 //when post no longer exists, summary is not in respo. callback with -1 to preserve data? OR delete entry??
 function getIDLikes(id, callback, retry){
     graph.setOptions(config.http.options).get(id + config.update.likesOptions, function (err, respo){
+        let doCB = typeof callback === 'function';
         if(err){
-            let postDeleted = 'message' in err && err.message.substring(0,39)=='Unsupported get request. Object with ID';
-            if(postDeleted){
-                console.log('WARN: Post deleted. id: ' + id);
-                callback(null, -1);
-            } else{
+            let postDeleted1 = 'message' in err && err.message.substring(0,39)=='Unsupported get request. Object with ID';
+            let postDeleted2 = 'message' in err && err.message == 'No node specified';
+            if(postDeleted1){
+                console.log('WARN: Post deleted1. id: ' + id);
+                if(doCB) callback(null, -1);
+            } else if(postDeleted2){
+                console.log('WARN: Post deleted2. id: ' + id);
+                if(doCB) callback(null, -1);
+            }
+            else{
                 //console.log('Graph GET ID LIKES (function) Error Retry: ' + retry);
                 //retry request
                 if(!retry || retry < 1){
                     getIDLikes(id, callback, retry?retry+1:1);
                 } else{
                     //console.log(err);
-                    if(typeof callback === 'function') callback(err, respo);
+                    if(doCB) callback(err, respo);
                 }
             }
         }
-        else if('summary' in respo){
-            if(typeof callback === 'function')
-                callback(err, respo.summary.total_count);
+        else if('reactions' in respo && 'summary' in respo.reactions){
+            if(doCB)
+                callback(err, respo.reactions.summary.total_count);
         }
         else{
-            console.log('WARN: Post no longer exists! ' + id);
-            if(typeof callback === 'function') callback(err, -1);
+            console.log('WARN: Post no longer exists?? SHOULD NOT HAPPEN ' + id);
+            if(doCB) callback(err, -1);
         }
     });
 }
@@ -367,5 +365,5 @@ function updateExistingFeedData(since, until, offsetInit){
 /****END FUNCTIONS****/
 
 console.log('Beginning data scrape...');
-//updateExistingFeedData('2017-08-01 15:20:44', null, 0);
+updateExistingFeedData(null, null, 0);
 //getPosts(false, true);
