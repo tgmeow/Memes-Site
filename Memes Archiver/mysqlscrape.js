@@ -1,6 +1,8 @@
-//TODO: find way to get token here
+//TODO: find way to get token(s) here? 
+    //NOTE: Authentication is generally used for client side 'users' not server side processing. See passport example.
 //TODO: accumulate db update and put it in one query for update
 //TODO: create retry capability?
+//TODO: Error handling and remove throw on error
 
 console.log('-Scraper Init-');
 //increaes threadpool size to enable better async threading(?)
@@ -50,6 +52,18 @@ sqlcon.connect(function(err) {
 
 /****BEGIN FUNCTIONS****/
 
+// {
+//   "id": "759985267390294_1681300798592065",
+//   "reactions": {
+//     "data": [
+//     ],
+//     "summary": {
+//       "total_count": 105,
+//       "viewer_reaction": "NONE"
+//     }
+//   }
+// }
+
 //function to get number of likes given an ID.
 //callback(err, response);
 //when post no longer exists, summary is not in respo. callback with -1 to preserve data? OR delete entry??
@@ -76,7 +90,7 @@ function getIDLikes(id, callback, retry){
                 callback(err, respo.summary.total_count);
         }
         else{
-            console.log('WARN: Post no longer exists!' + id);
+            console.log('WARN: Post no longer exists! ' + id);
             if(typeof callback === 'function') callback(err, -1);
         }
     });
@@ -110,8 +124,8 @@ function getFeed(since, until){
                 throw err;
             }
             else{
-                console.log('Inserted ' + values.length + ' entries.' + finishedQueryCount + ' : ' + feedCount);
                 finishedQueryCount += values.length;
+                console.log('Inserted ' + values.length + ' entries.' + finishedQueryCount + ' : ' + feedCount);
 
                 if(typeof callback === 'function')  callback(err, res);
             }
@@ -251,22 +265,22 @@ function updateExistingFeedData(since, until, offsetInit){
         }
         else{
             console.log('Total ' + res[0].count);
-            let total = res[0].count;
-            let dbReq = 0;
-            let gGot = 0;
-            let dbUpdated = 0;
+            let total = res[0].count; //total elements in the db
+            let dbReq = 0; //running count of elements requested from the database
+            //let gGot = 0;
+            let dbUpdated = 0; //elements that have been updated in the db, DOES NOT INCLUDE ERROR
+            let errorCount = 0; //feed elements that are missing or some error
             let offset = offsetInit;
 
             //function that checks and prints the current update progress.
             //can call dbQueryUpdate() ... spahgetti code?
             function processUpdateProgress(){
-                if(dbUpdated%(config.feed.limitCount/4) == 0){
-                    console.log('Updated: ' + dbUpdated + ' : ' + gGot + ' : ' + dbReq);
-                }
                 //updates caught up with db pagination, continue with next page
-                if(dbUpdated == dbReq){
+                //console.log('function progress' + (dbUpdated+errorCount) + ' : ' + dbReq);
+                //ensure that the counts are equal
+                if(dbUpdated+errorCount == dbReq){
                     //last element updated. No more elements
-                    if(dbUpdated == total){
+                    if(dbUpdated+errorCount == total){
                         console.log('Updated all entries.');
                     }
                     //we have not gotten all elements, so continue with updates.
@@ -277,7 +291,7 @@ function updateExistingFeedData(since, until, offsetInit){
             //make db query to get paginated list of id bounded by since and until
             function dbQueryUpdate(){
                 let sqlGetIDQuery = 'SELECT id FROM ' + config.db.tableName + datesBound +  ' ORDER BY updated_time desc LIMIT ' + offset +', ' + config.feed.limitCount;
-                console.log(sqlGetIDQuery);
+                //console.log(sqlGetIDQuery);
                 sqlcon.query(sqlGetIDQuery, function(err, resp){
                     if(err){
                         console.log('Error getting entries from DB!');
@@ -285,40 +299,58 @@ function updateExistingFeedData(since, until, offsetInit){
                         throw err;
                     }
                     else{
-                        //console.log('Got: ' + resp.length);
+                        console.log('Got: ' + resp.length);
                         dbReq += resp.length;
                         offset += config.feed.limitCount;
                         //for each resp element, make graph request of id for num likes
+                        let values = [];
+                        let curGGot = 0; //response counter for each for loop, DOES NOT INCLUDE ERROR
+                        let curErr = 0; //error counter for each for loop
                         for(let i = 0; resp.length!=0 && i < resp.length; i++){
-                            getIDLikes(resp[i].id, function(err, resp){
+                            getIDLikes(resp[i].id, function(err, likesRes){
                                 if(err){
                                     console.log('Error getting number of likes!');
                                     console.log(err);
                                     throw err;
                                 }
-                                gGot++;
+                                //console.log(curGGot + ' : ' + curErr + ' : ' + resp.length);
                                 //-1 if post no longer exists or something similar
-                                if(resp != -1){
-                                    //resp is a number
-                                    //make db query to update id
-                                    let sqlUpdateLikes = 'UPDATE ' + config.db.tableName + ' SET likes = ' + resp + ' WHERE id = ' + this.id ;
-                                    sqlcon.query(sqlUpdateLikes, function(err, res){
+                                if(likesRes != -1){
+                                    curGGot++;
+                                    //likesRes is a number
+                                    let data = [this.id, likesRes];
+                                    values.push(data);
+
+                                } //end if
+                                else {
+                                    //consider entry an error
+                                    errorCount++;
+                                    curErr++;
+                                } //end else
+
+                                //Check when all values have been received.
+                                //make db query to update id
+                                if(curGGot+curErr == resp.length){
+                                    let sqlUpdateLikes = 'INSERT INTO ' + config.db.tableName + ' (id, likes)'
+                                        + ' VALUES ? ON DUPLICATE KEY UPDATE '
+                                        + 'likes = VALUES(likes)';
+                                    //console.log(sqlUpdateLikes);
+                                    //console.log(values);
+                                    sqlcon.query(sqlUpdateLikes, [values], function(err, res){
                                         if(err){
-                                            console.log('Error updating DB!');
+                                            //console.log('ERROR INSERTING DATA. QUERY: ' + sqlQuery);
                                             console.log(err);
                                             throw err;
                                         }
                                         else{
-                                            dbUpdated++;
+                                            dbUpdated += curGGot;
+                                            console.log('Inserted ' + values.length + ' entries, ' + curErr + ' errors. ' + dbUpdated + ' : ' + total + ' err: ' + errorCount);
+                                            //check progress at the end when values have been inserted into db
                                             processUpdateProgress();
                                         }
                                     }); //END sql update query
-                                } //end if
-                                else {
-                                    //consider entry as updated.
-                                    dbUpdated++;
-                                    processUpdateProgress();
-                                } //end else
+                                } //END if
+
                             }.bind( {id : resp[i].id} ) ); //END get likes
                         } //END sql res loop
                     } //END else
@@ -333,7 +365,7 @@ function updateExistingFeedData(since, until, offsetInit){
 } //END function updateExistingFeedData
 
 /****END FUNCTIONS****/
-//updateExistingFeedData(null, null, 0);
 
 console.log('Beginning data scrape...');
-getPosts(false, true);
+//updateExistingFeedData('2017-08-01 15:20:44', null, 0);
+//getPosts(false, true);
