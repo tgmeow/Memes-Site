@@ -4,6 +4,7 @@
   "description": "Server side memes retriever",
   "main": "server.js",
   "dependencies": {
+    "express": "^4.15.3",
     "mysql": "^2.14.0"
   },
   "devDependencies": {},

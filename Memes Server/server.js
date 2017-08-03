@@ -9,6 +9,9 @@ console.log('-Server Init-');
 
 const mysql = require('mysql');
 const config = require('./config');
+const express = require('express');
+var app = express();
+
 
 //Connect to db. USES POOLING
 const sqlPool = mysql.createPool(config.db.connectionOp);
@@ -24,6 +27,7 @@ sqlPool.getConnection(function(err, connection) {
 
 //base string to begin sql query
 const SQL_BASE_STRING = 'SELECT id, message, created_time, likes, from_id, type, full_picture FROM ';
+const SQL_BASE_COUNT = 'SELECT COUNT(id) AS count FROM '
 //enumerate some const types to case switch db request
 const SORT = {
     LIKES : {value: 0, name: 'Likes'},  //Order by number of likes
@@ -101,7 +105,7 @@ function processTime(time){
         today.setMonth(today.getMonth() - time.amount);
     } else{
         //time is not one of the listed elements or is null or undef. use default.
-        time == TIME.DAY;
+        time = TIME.DAY;
         today.setTime(today.getTime() - time.amount);
     }
     if(time != TIME.ALL){
@@ -111,6 +115,16 @@ function processTime(time){
         return ' WHERE created_time > "' + formattedTime + '"';
     }
     else return '';
+}
+
+//escape, error check, and return the where from_id = string given an id
+//DEFAULT return id = 0 for bad id
+function processFromID(id){
+    if(typeof id === 'string' || typeof id === 'number'){
+        id = sqlPool.escape(id + ''); //turn id into a string by adding empty string in case of NaN or Infinity
+        return ' WHERE from_id = ' + id;
+    }
+    else return ' WHERE from_id = 0';
 }
 
 //error check and return the where year string for a bound date range in BOUND_TIME
@@ -154,33 +168,80 @@ function pooledQuery(sqlQuery, callback){
 //Callback(err, res) err message and res as array of entries with:
 //  post id (for url linking), message, created time, likes, poster id , type, picture url(not sure if permalink)
 function getRecentDBData(sort, order, time, number, skip, callback){
-    //base query
     //TIME (in server is stored as UTC datetime) DEFAULT: time == DAY
-    //SORT AND ORDER. DEFAULT likes DESC
-    //NUMBER AND SKIP. DEFAULT number = 20 (LIMIT 100) and skip = 0
+    //SORT AND ORDER. DEFAULT likes DESC //NUMBER AND SKIP. DEFAULT number = 20 (LIMIT 100) and skip = 0
     let sqlQuery = SQL_BASE_STRING + config.db.tableName + processTime(time)
         + processSortOrderNumSkip(sort, order, number, skip);
 
-    //DO QUERY AND CALLBACK
     pooledQuery(sqlQuery, callback);
 }
 
+//Get entries from database. Params are sorting, order, bound year range, number, and how many to skip (for pagination)
+//Callback(err, res) err message and res as array of entries with:
+//  post id (for url linking), message, created time, likes, poster id , type, picture url(not sure if permalink)
 function getBoundDBData(sort, order, year, number, skip, callback){
-    //base query
     //YEAR: DEFAULT IS MOST RECENT YEAR
-    //SORT AND ORDER. DEFAULT likes DESC
-    //NUMBER AND SKIP. DEFAULT number = 20 (LIMIT 100) and skip = 0
+    //SORT AND ORDER. DEFAULT likes DESC //NUMBER AND SKIP. DEFAULT number = 20 (LIMIT 100) and skip = 0
     let sqlQuery = SQL_BASE_STRING + config.db.tableName + processBoundYear(year)
         + processSortOrderNumSkip(sort, order, number, skip);
 
-    //DO QUERY AND CALLBACK
     pooledQuery(sqlQuery, callback);
 }
 
+//gets paginated posts from a user, given an id 'from_id'
+//returns the posts
+function getPostsByUser(from_id, sort, order, number, skip, callback){
+    let sqlQuery = SQL_BASE_STRING + config.db.tableName + processFromID(from_id)
+        + processSortOrderNumSkip(sort, order, number, skip);
+    
+    pooledQuery(sqlQuery, callback);
+}
+
+//Gets the count of number of rows of a 'recentDBData' query
+//returns count
+function getRecentDBDataCount(time, callback){
+    let sqlQuery = SQL_BASE_COUNT + config.db.tableName + processTime(time);
+    pooledQuery(sqlQuery, callback);
+}
+
+//Gets the count of number of rows of a 'boundDBData' query
+//returns count
+function getBoundDBDataCount(year, callback){
+    let sqlQuery = SQL_BASE_COUNT + config.db.tableName + processBoundYear(year);
+    pooledQuery(sqlQuery, callback);
+}
+
+//Gets the count of number of rows of a PostsByUser query
+//returns count
+function getPostsByUserCount(from_id, callback){
+    let sqlQuery = SQL_BASE_COUNT + config.db.tableName + processFromID(from_id);
+    pooledQuery(sqlQuery, callback);
+}
+
+
 /*****END FUNCTIONS*****/
 
+/*****BEGIN SERVER ROUTING*****/
+
+//CURRENT TYPES OF BROWSING:
+//  TOP SINCE string
+//  SCHOOL YEAR number
+//  USER from_id
+app.get('/test', function(req, res){
+    //parse/process/escape get variables, options, idk
+    getRecentDBData(SORT.LIKES, ORDER.DESC, TIME.MONTH, 20, 0, function(err, resp){
+        if(err) console.log(err);
+        res.setHeader('Content-Type', 'application/json');
+        res.send(JSON.stringify({data: resp}));
+    });
+});
+
+/*****END SERVER ROUTING*****/
+
+app.listen(3000);
+
 // //Testing
-// getRecentDBData(SORT.POSTED, ORDER.DESC, TIME.DAY, 2, 0, function(err, res){
+// getRecentDBData(SORT.LIKES, ORDER.DESC, TIME.MONTH, 2, 0, function(err, res){
 //     if(err) console.log(err);
 //     else{
 //         console.log(res);
