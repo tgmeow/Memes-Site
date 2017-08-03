@@ -1,7 +1,7 @@
 //TODO: SET UP
 //      ACTUAL SERVER&PAGES
 //      SERVER PAGING REQ
-//      REQUEST CACHING
+//      DB REQUEST CACHING
 //      CLIENT SIDE COM/PAGINATION
 //      CLIENT SIDE ORG FOR FEED SORTINGS
 //NOTE: USES GMT (UTC) TIME
@@ -50,9 +50,6 @@ const TIME = {
 const BOUND_TIME = {
     SCHYLOWER:{value:10, name: 'By school year MIN RANGE', clip: '-08-01 00:00:00', amount: 12},
 }
-const YEAR_MIN = 1970;
-const YEAR_MAX = 9900;
-
 
 /*****END VARIABLES*****/
 
@@ -92,15 +89,10 @@ function processSortOrderNumSkip(sort, order, number, skip){
 }
 
 
-//Get entries from database. Params are sorting, order, time, number, and how many to skip (for pagination)
-//Callback(err, res) err message and res as array of entries with:
-//  post id (for url linking), message, created time, likes, poster id , type, picture url(not sure if permalink)
-function getRecentDBData(sort, order, time, number, skip, callback){
-    //base query
-    let sqlQuery = SQL_BASE_STRING + config.db.tableName;
+//error check and return the where time range for a time span in TIME
+//DEFAULT TIME.DAY
+function processTime(time){
     let today = new Date();
-
-    //TIME (in server is stored as UTC datetime) DEFAULT: time == DAY
     if(time == TIME.ALL){
         //do nothing
     } else if(time == TIME.HOUR || time == TIME.DAY || time == TIME.WEEK){
@@ -116,29 +108,16 @@ function getRecentDBData(sort, order, time, number, skip, callback){
         //Month is 0 based indexing
         let formattedTime = today.getUTCFullYear() + '-' + (today.getUTCMonth()+1) + '-' + today.getUTCDate()
             + ' ' + today.getUTCHours() + ':' + today.getUTCMinutes() + ':' + today.getUTCSeconds();
-        sqlQuery += ' WHERE created_time > "' + formattedTime + '"';
+        return ' WHERE created_time > "' + formattedTime + '"';
     }
-
-    //SORT AND ORDER. DEFAULT likes DESC
-    //NUMBER AND SKIP. DEFAULT number = 20 (LIMIT 100) and skip = 0
-    sqlQuery += processSortOrderNumSkip(sort, order, number, skip);
-
-    //CALLBACK
-    //console.log(sqlQuery); //debug
-    sqlPool.getConnection(function(err, connection){
-        connection.query(sqlQuery, function(err, res){
-            connection.release();
-            if(err) console.log('Error getting data from db!');
-            else if(typeof callback == 'function') callback(err, res);
-        });
-    }); //END POOL
+    else return '';
 }
 
-function getBoundDBData(sort, order, year, number, skip, callback){
-    //base query
-    let sqlQuery = SQL_BASE_STRING + config.db.tableName;
-
-    //YEAR: DEFAULT IS MOST RECENT YEAR
+//error check and return the where year string for a bound date range in BOUND_TIME
+//DEFAULT MOST RECENT SCHOOL YEAR
+//USES BOUND_TIME.SCHYLOWER.clip AS DATE CLIP
+function processBoundYear(year){
+    let clipTime = BOUND_TIME.SCHYLOWER.clip;
     if(typeof year === 'number'){
         //CHECK YEAR BOUNDS FOR REASONABLE YEARS
         if(year < config.queryBound.YEAR_MIN) year = config.queryBound.YEAR_MIN;
@@ -146,29 +125,56 @@ function getBoundDBData(sort, order, year, number, skip, callback){
     } else{
         let today = new Date();
         //check which school year we are in based today's date compated to clip value
-        let clipTime = new Date( today.getUTCFullYear() + BOUND_TIME.SCHYLOWER.clip + ' GMT');
+        let clipTime = new Date( today.getUTCFullYear() + clipTime + ' GMT');
         if(today < clipTime){ //next school year has not begun, so use last school year
             year = today.getUTCDate()-1;
         } else year = today.getUTCDate();
     }
-    sqlQuery += ' WHERE created_time > "' + year + BOUND_TIME.SCHYLOWER.clip + '" AND created_time < "' + (year+1) + BOUND_TIME.SCHYLOWER.clip + '"'; 
+    return ' WHERE created_time > "' + year + clipTime + '" AND created_time < "' + (year+1) + clipTime + '"'; 
+}
 
-    //SORT AND ORDER. DEFAULT likes DESC
-    //NUMBER AND SKIP. DEFAULT number = 20 (LIMIT 100) and skip = 0
-    sqlQuery += processSortOrderNumSkip(sort, order, number, skip);
 
-    //CALLBACK
-    console.log(sqlQuery); //debug
+//function to get entries from database using a pooled connection, given a query and a callback function.
+//No error handling
+function pooledQuery(sqlQuery, callback){
+    //console.log(sqlQuery); //debug
     sqlPool.getConnection(function(err, connection){
         connection.query(sqlQuery, function(err, res){
             connection.release();
-            if(err){
-                console.log('Error getting data from db!');
+            if(err) console.log('Error getting data from db!');
+            else {
+                if(typeof callback === 'function') callback(err, res);
+                else console.log('Error query callback is not a function.');
             }
-            else if(typeof callback == 'function') callback(err, res);
         });
     }); //END POOL
+}
 
+//Get entries from database. Params are sorting, order, time, number, and how many to skip (for pagination)
+//Callback(err, res) err message and res as array of entries with:
+//  post id (for url linking), message, created time, likes, poster id , type, picture url(not sure if permalink)
+function getRecentDBData(sort, order, time, number, skip, callback){
+    //base query
+    //TIME (in server is stored as UTC datetime) DEFAULT: time == DAY
+    //SORT AND ORDER. DEFAULT likes DESC
+    //NUMBER AND SKIP. DEFAULT number = 20 (LIMIT 100) and skip = 0
+    let sqlQuery = SQL_BASE_STRING + config.db.tableName + processTime(time)
+        + processSortOrderNumSkip(sort, order, number, skip);
+
+    //DO QUERY AND CALLBACK
+    pooledQuery(sqlQuery, callback);
+}
+
+function getBoundDBData(sort, order, year, number, skip, callback){
+    //base query
+    //YEAR: DEFAULT IS MOST RECENT YEAR
+    //SORT AND ORDER. DEFAULT likes DESC
+    //NUMBER AND SKIP. DEFAULT number = 20 (LIMIT 100) and skip = 0
+    let sqlQuery = SQL_BASE_STRING + config.db.tableName + processBoundYear(year)
+        + processSortOrderNumSkip(sort, order, number, skip);
+
+    //DO QUERY AND CALLBACK
+    pooledQuery(sqlQuery, callback);
 }
 
 /*****END FUNCTIONS*****/
