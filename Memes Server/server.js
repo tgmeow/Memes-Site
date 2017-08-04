@@ -8,8 +8,9 @@
 console.log('-Server Init-');
 
 const mysql = require('mysql');
-const config = require('./config');
 const express = require('express');
+const https = require('https');
+const config = require('./config');
 var app = express();
 
 
@@ -30,29 +31,29 @@ const SQL_BASE_STRING = 'SELECT id, message, created_time, likes, from_id, type,
 const SQL_BASE_COUNT = 'SELECT COUNT(id) AS count FROM '
 //enumerate some const types to case switch db request
 const SORT = {
-    LIKES : {value: 0, name: 'Likes'},  //Order by number of likes
-    POSTED: {value: 1, name: 'Posted'}  //Order by date posted
+    LIKES : {value: 0, name: 'likes'},  //Order by number of likes
+    POSTED: {value: 1, name: 'posted'}  //Order by date posted
 };
 const ORDER = {
-    DESC: {value: 2, name: 'Descending'},    //high to low
-    ASC : {value: 3, name: 'Ascending'}    //low to high (?)
+    DESC: {value: 2, name: 'desc'},    //high to low
+    ASC : {value: 3, name: 'asc'}    //low to high (?)
     
 };
 //amount is amount of time (for easy math)
 //Month and year require different code, in terms of months
 const TIME = {
-    HOUR : {value: 4, name: 'Hour', amount: (3600*1000)},    //Within the last hour
-    DAY : {value: 5, name: 'Day',   amount: (24*3600*1000)},      //Within the last day
-    WEEK : {value: 6, name: 'Week', amount: (7*24*3600*1000)},    //Within the last week
-    MONTH : {value: 7, name: 'Month', amount: (1)},  //Within the last month
-    YEAR : {value: 8, name: 'Year', amount: (12)},    //Within the last year
-    ALL : {value: 9, name: 'All', amount: (0)}       //no time bounds
+    HOUR : {value: 4, name: 'hour', amount: (3600*1000)},    //Within the last hour
+    DAY : {value: 5, name: 'day',   amount: (24*3600*1000)},      //Within the last day
+    WEEK : {value: 6, name: 'week', amount: (7*24*3600*1000)},    //Within the last week
+    MONTH : {value: 7, name: 'month', amount: (1)},  //Within the last month
+    YEAR : {value: 8, name: 'year', amount: (12)},    //Within the last year
+    ALL : {value: 9, name: 'all', amount: (0)}       //no time bounds
 };
 
 //base time from which to calculate a range of time for a school year of memes in datetime (DANKEST MEMES OF 201#)
 //SCHYLOWER is the beginning year range of the group and posts
 const BOUND_TIME = {
-    SCHYLOWER:{value:10, name: 'By school year MIN RANGE', clip: '-08-01 00:00:00', amount: 12},
+    SCHYLOWER:{value:10, name: 'schyear', clip: '-08-01 00:00:00', amount: 12},
 }
 
 /*****END VARIABLES*****/
@@ -78,11 +79,18 @@ function processOrder(order){
 //error checks and returns a string containing the SQL query for number of entries and skip
 //DEFAULT get 20 skip 0
 function processNumSkip(number, skip){
-    if(typeof skip != 'number') skip = config.queryBound.SKIP_DEFAULT;
-    else if(skip < config.queryBound.SKIP_MIN) skip = config.queryBound.SKIP_MIN;
-    if(typeof number != 'number') number = config.queryBound.NUMBER_DEFAULT;
-    else if(number < config.queryBound.NUMBER_MIN) number = config.queryBound.NUMBER_MIN;
-    else if(number > config.queryBound.NUMBER_MAX) number = config.queryBound.NUMBER_MAX;
+    if(typeof skip === 'number' || typeof skip === 'string'){
+        skip = sqlPool.escape(parseInt(skip, 10));
+        if(skip < config.queryBound.SKIP_MIN || isNaN(skip) || skip === Infinity) skip = config.queryBound.SKIP_MIN;
+    }
+    else skip = config.queryBound.SKIP_DEFAULT;
+    if(typeof number === 'number' || typeof skip === 'string'){
+        number = sqlPool.escape(parseInt(number, 10));
+        if(isNaN(number) || number === Infinity) number = config.queryBound.NUMBER_DEFAULT;
+        else if(number < config.queryBound.NUMBER_MIN) number = config.queryBound.NUMBER_DEFAULT;
+        else if(number > config.queryBound.NUMBER_MAX) number = config.queryBound.NUMBER_DEFAULT;
+    }
+    else number = config.queryBound.NUMBER_DEFAULT; 
     return ' LIMIT ' + skip + ', ' + number;
 }
 
@@ -127,31 +135,42 @@ function processFromID(id){
     else return ' WHERE from_id = 0';
 }
 
+//Get most recent school year based on date clip
+//USES BOUND_TIME.SCHYLOWER.clip AS DATE CLIP
+function getMostRecentSchoolYear(){
+    let clipTime = BOUND_TIME.SCHYLOWER.clip;
+    let today = new Date();
+    //check which school year we are in based today's date compated to clip value
+    let clipDate = new Date( today.getUTCFullYear() + clipTime + ' GMT');
+    if(today < clipDate){ //next school year has not begun, so use last school year
+        return today.getUTCFullYear()-1;
+    } else return today.getUTCFullYear();
+}
+
 //error check and return the where year string for a bound date range in BOUND_TIME
 //DEFAULT MOST RECENT SCHOOL YEAR
 //USES BOUND_TIME.SCHYLOWER.clip AS DATE CLIP
 function processBoundYear(year){
     let clipTime = BOUND_TIME.SCHYLOWER.clip;
-    if(typeof year === 'number'){
+    if(typeof year === 'number' || typeof year === 'string'){
+        year = sqlPool.escape(parseInt(year, 10));
         //CHECK YEAR BOUNDS FOR REASONABLE YEARS
-        if(year < config.queryBound.YEAR_MIN) year = config.queryBound.YEAR_MIN;
-        else if(year > config.queryBound.YEAR_MAX) year = config.queryBound.YEAR_MAX;
+        if(isNaN(year) || year === Infinity
+            || year < config.queryBound.YEAR_MIN || year > config.queryBound.YEAR_MAX)
+            {
+                year = getMostRecentSchoolYear();
+            }
     } else{
-        let today = new Date();
-        //check which school year we are in based today's date compated to clip value
-        let clipTime = new Date( today.getUTCFullYear() + clipTime + ' GMT');
-        if(today < clipTime){ //next school year has not begun, so use last school year
-            year = today.getUTCDate()-1;
-        } else year = today.getUTCDate();
+        year = getMostRecentSchoolYear();
     }
-    return ' WHERE created_time > "' + year + clipTime + '" AND created_time < "' + (year+1) + clipTime + '"'; 
+    return ' WHERE created_time > "' + year + clipTime + '" AND created_time < "' + (parseInt(year)+1) + clipTime + '"'; 
 }
 
 
 //function to get entries from database using a pooled connection, given a query and a callback function.
 //No error handling
 function pooledQuery(sqlQuery, callback){
-    //console.log(sqlQuery); //debug
+    //console.log(sqlQuery); //debug ONLY
     sqlPool.getConnection(function(err, connection){
         connection.query(sqlQuery, function(err, res){
             connection.release();
@@ -172,7 +191,6 @@ function getRecentDBData(sort, order, time, number, skip, callback){
     //SORT AND ORDER. DEFAULT likes DESC //NUMBER AND SKIP. DEFAULT number = 20 (LIMIT 100) and skip = 0
     let sqlQuery = SQL_BASE_STRING + config.db.tableName + processTime(time)
         + processSortOrderNumSkip(sort, order, number, skip);
-
     pooledQuery(sqlQuery, callback);
 }
 
@@ -219,6 +237,50 @@ function getPostsByUserCount(from_id, callback){
 }
 
 
+//SERVER FUNCTIONS
+//Matches query strings to objects, default time over bound_time Returns object with matched objects
+function parseQueryParams(query){
+    //p OR NOT q to determine priority of time vs boundtime
+    let useTime = ('time' in query) || !('bound_time' in query);
+
+    query.sort = ('sort' in query) ? query.sort : '';
+    query.order = ('order' in query) ? query.order : '';
+    query.time = ('time' in query) ? query.time : '';
+    query.bound_time = ('bound_time' in query) ? query.bound_time : '';
+    query.count = ('count' in query) ? query.count : '';
+    query.skip = ('skip' in query) ? query.skip : '';
+
+    //match string/number to predefined object
+    let parsed = {};
+    if(query.sort == SORT.LIKES.name) parsed.sort = SORT.LIKES;
+    else if(query.sort == SORT.POSTED.name) parsed.sort = SORT.POSTED;
+    else parsed.sort = SORT.LIKES;
+
+    if(query.order == ORDER.ASC.name) parsed.order = ORDER.ASC;
+    else if(query.order == ORDER.DESC.name) parsed.order = ORDER.DESC;
+    else parsed.order = ORDER.DESC;
+
+    if(useTime){
+        if(query.time == TIME.HOUR.name) parsed.time = TIME.HOUR;
+        else if(query.time == TIME.DAY.name) parsed.time = TIME.DAY;
+        else if(query.time == TIME.WEEK.name) parsed.time = TIME.WEEK;
+        else if(query.time == TIME.MONTH.name) parsed.time = TIME.MONTH;
+        else if(query.time == TIME.YEAR.name) parsed.time = TIME.YEAR;
+        else if(query.time == TIME.ALL.name) parsed.time = TIME.ALL;
+        else parsed.time = TIME.DAY;
+    } 
+    else{ //using bound_time
+        //do nothing with bound_time because it should just be a year. The functoin will handle errors and escape
+        parsed.bound_time = query.bound_time;
+    }
+
+    //do nothing with count and skip because they should be numbers. The function will handle errors and escape
+    parsed.count = query.count;
+    parsed.skip = query.skip;
+    return parsed;
+}
+
+
 /*****END FUNCTIONS*****/
 
 /*****BEGIN SERVER ROUTING*****/
@@ -227,29 +289,43 @@ function getPostsByUserCount(from_id, callback){
 //  TOP SINCE string
 //  SCHOOL YEAR number
 //  USER from_id
-app.get('/test', function(req, res){
-    //parse/process/escape get variables, options, idk
-    getRecentDBData(SORT.LIKES, ORDER.DESC, TIME.MONTH, 20, 0, function(err, resp){
+app.get('/data', function(req, res){
+    //PARAMS:
+    //sort order time count skip
+    //parse/process/escape get params, options, idk
+
+    //match string/number to predefined object. Handles XOR time/bounded_time
+    let parsed = parseQueryParams(req.query);
+
+    function handleDBResp(err, resp){
         if(err) console.log(err);
         res.setHeader('Content-Type', 'application/json');
         res.send(JSON.stringify({data: resp}));
-    });
+    }
+
+    if('time' in parsed)
+    getRecentDBData(parsed.sort, parsed.order, parsed.time, parsed.count, parsed.skip, handleDBResp);
+
+    else if('bound_time' in parsed)
+    getBoundDBData(parsed.sort, parsed.order, parsed.bound_time, parsed.count, parsed.skip, handleDBResp);
+
+    else console.log('ERROR WITH PARAM PARSING! NEVER SHOULD HAPPEN!');
+});
+
+// app.get('/', function(req, res){
+//     res.setHeader('Content-Type', 'text/html');
+//     res.send('//TODO: Insert dank memes');
+// });
+
+app.use(express.static('./public'));
+
+// Handle 404
+app.use(function (req, res) {
+  res.status(404);
+  res.send('404: Oops, no memes here O_O');
 });
 
 /*****END SERVER ROUTING*****/
 
 app.listen(3000);
 
-// //Testing
-// getRecentDBData(SORT.LIKES, ORDER.DESC, TIME.MONTH, 2, 0, function(err, res){
-//     if(err) console.log(err);
-//     else{
-//         console.log(res);
-//     }
-// });
-// getBoundDBData(SORT.LIKES, ORDER.DESC, 2016, 200, 0, function(err, res){
-//     if(err) console.log(err);
-//     else{
-//         console.log(res);
-//     }
-// });
