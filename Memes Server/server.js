@@ -169,7 +169,7 @@ function processBoundYear(year){
 //function to get entries from database using a pooled connection, given a query and a callback function.
 //No error handling
 function pooledQuery(sqlQuery, callback){
-    //console.log(sqlQuery); //debug ONLY
+    console.log(sqlQuery); //debug ONLY
     sqlPool.getConnection(function(err, connection){
         connection.query(sqlQuery, function(err, res){
             connection.release();
@@ -298,6 +298,11 @@ app.get('/data', function(req, res){
 
     function handleDBResp(err, resp){
         if(err) console.log(err);
+
+            //TEMP DEV ONLY
+            res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3000');
+            res.setHeader('Access-Control-Allow-Methods', 'GET');
+
         res.setHeader('Content-Type', 'application/json');
         res.send(JSON.stringify({data: resp}));
     }
@@ -316,7 +321,7 @@ app.get('/data', function(req, res){
 //     res.send('//TODO: Insert dank memes');
 // });
 
-app.use(express.static('./public'));
+app.use(express.static('./build'));
 
 // Handle 404
 app.use(function (req, res) {
@@ -326,5 +331,5 @@ app.use(function (req, res) {
 
 /*****END SERVER ROUTING*****/
 
-app.listen(3000);
+app.listen(8080);
 
