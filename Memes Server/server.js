@@ -17,8 +17,8 @@ var app = express();
 const sqlPool = mysql.createPool(config.db.connectionOp);
 //test connection
 sqlPool.getConnection(function(err, connection) {
-    connection.release();
     if (err) throw err;
+    connection.release();
     console.log("DB connected!");
 });
 //END connect to db
@@ -26,7 +26,7 @@ sqlPool.getConnection(function(err, connection) {
 /*****BEGIN VARIABLES*****/
 
 //base string to begin sql query
-const SQL_BASE_STRING = 'SELECT id, message, created_time, likes, from_id, type, full_picture FROM ';
+const SQL_BASE_STRING = 'SELECT id, message, created_time, likes, from_id, type, full_picture, last_updated FROM ';
 const SQL_BASE_COUNT = 'SELECT COUNT(id) AS count FROM '
 //enumerate some const types to case switch db request
 const SORT = {
@@ -240,12 +240,11 @@ function getPostsByUserCount(from_id, callback){
 //Matches query strings to objects, default time over bound_time Returns object with matched objects
 function parseQueryParams(query){
     //p OR NOT q to determine priority of time vs boundtime
-    let useTime = ('time' in query) || !('bound_time' in query);
+    //let useTime = ('time' in query) || !('bound_time' in query);
 
     query.sort = ('sort' in query) ? query.sort : '';
     query.order = ('order' in query) ? query.order : '';
     query.time = ('time' in query) ? query.time : '';
-    query.bound_time = ('bound_time' in query) ? query.bound_time : '';
     query.count = ('count' in query) ? query.count : '';
     query.skip = ('skip' in query) ? query.skip : '';
 
@@ -259,19 +258,36 @@ function parseQueryParams(query){
     else if(query.order == ORDER.DESC.name) parsed.order = ORDER.DESC;
     else parsed.order = ORDER.DESC;
 
-    if(useTime){
-        if(query.time == TIME.HOUR.name) parsed.time = TIME.HOUR;
-        else if(query.time == TIME.DAY.name) parsed.time = TIME.DAY;
-        else if(query.time == TIME.WEEK.name) parsed.time = TIME.WEEK;
-        else if(query.time == TIME.MONTH.name) parsed.time = TIME.MONTH;
-        else if(query.time == TIME.YEAR.name) parsed.time = TIME.YEAR;
-        else if(query.time == TIME.ALL.name) parsed.time = TIME.ALL;
-        else parsed.time = TIME.DAY;
-    } 
-    else{ //using bound_time
-        //do nothing with bound_time because it should just be a year. The functoin will handle errors and escape
-        parsed.bound_time = query.bound_time;
+    parsed.bound = false;
+    //if(useTime){
+    if(query.time == TIME.HOUR.name) parsed.time = TIME.HOUR;
+    else if(query.time == TIME.DAY.name) parsed.time = TIME.DAY;
+    else if(query.time == TIME.WEEK.name) parsed.time = TIME.WEEK;
+    else if(query.time == TIME.MONTH.name) parsed.time = TIME.MONTH;
+    else if(query.time == TIME.YEAR.name) parsed.time = TIME.YEAR;
+    else if(query.time == TIME.ALL.name) parsed.time = TIME.ALL;
+    //else parsed.time = TIME.DAY;
+    
+    //query.time is not one of the TIME values, so try parsing it as an int to see if it is a valid time.
+    else{
+        const parseTest = sqlPool.escape(parseInt(query.time, 10));
+        console.log(parseTest);
+        if(isNaN(parseTest) || parseTest === Infinity
+        || parseTest < config.queryBound.YEAR_MIN || parseTest > config.queryBound.YEAR_MAX)
+        {
+            //not valid as a year so default to time=day
+            parsed.time = TIME.DAY;
+        } else{
+            //valid as a year
+            parsed.time = parseTest;
+            parsed.bound = true;
+        }
     }
+    //} 
+    //else{ //using bound_time
+        //do nothing with bound_time because it should just be a year. The functoin will handle errors and escape
+        //parsed.bound_time = query.bound_time;
+    //}
 
     //do nothing with count and skip because they should be numbers. The function will handle errors and escape
     parsed.count = query.count;
@@ -302,16 +318,16 @@ app.get('/data', function(req, res){
             //TEMP DEV ONLY
             res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3000');
             res.setHeader('Access-Control-Allow-Methods', 'GET');
-
+            console.log(resp);
         res.setHeader('Content-Type', 'application/json');
         res.send(JSON.stringify({data: resp}));
     }
 
-    if('time' in parsed)
+    if('bound' in parsed && !parsed.bound)
     getRecentDBData(parsed.sort, parsed.order, parsed.time, parsed.count, parsed.skip, handleDBResp);
 
-    else if('bound_time' in parsed)
-    getBoundDBData(parsed.sort, parsed.order, parsed.bound_time, parsed.count, parsed.skip, handleDBResp);
+    else if('bound' in parsed && parsed.bound)
+    getBoundDBData(parsed.sort, parsed.order, parsed.time, parsed.count, parsed.skip, handleDBResp);
 
     else console.log('ERROR WITH PARAM PARSING! NEVER SHOULD HAPPEN!');
 });

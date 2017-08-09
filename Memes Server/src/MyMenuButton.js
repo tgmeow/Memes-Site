@@ -6,6 +6,10 @@ class MyMenuButton extends Component{
         super(props);
     }
 
+    componentDidMount(){
+
+    }
+
     render(){
         const menuItems = this.props.menuItems.map((word, i) => {
             return(
@@ -35,7 +39,7 @@ class MyMenuButton extends Component{
 }
 
 function handleSelection(value, event) {
-  event.stopPropagation;
+  event.stopPropagation();
   console.log(value);
   this.onSelect(value);
 }
