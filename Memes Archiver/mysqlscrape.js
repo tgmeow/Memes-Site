@@ -1,8 +1,11 @@
 //TODO: find way to get token(s) here? 
     //NOTE: Authentication is generally used for client side 'users' not server side processing. See passport example.
-//TODO: accumulate db update and put it in one query for update
 //TODO: create retry capability?
+
 //TODO: Error handling and remove throw on error
+//TODO: xxx SHARED A LINK HAS TYPE LINK AND FIELD LINK. NOT CURRENTLY INCLUDED IN SCRAPE
+
+//TODO: IMPORTANT: REMOVE ENTRIES THAT NO LONGER EXIST
 
 //NOTE: Batch responses and nested requests via field expansion is possible
 //but difficult to implement (with error handling) and potentially confusing
@@ -55,44 +58,6 @@ sqlcon.connect(function(err) {
 
 
 /****BEGIN FUNCTIONS****/
-
-//function to get number of reactions given an ID.
-//callback(err, response);
-//when post no longer exists, summary is not in respo. callback with -1 to preserve data? OR delete entry??
-function getIDLikes(id, callback, retry){
-    graph.setOptions(config.http.options).get(id + config.update.likesOptions, function (err, respo){
-        let doCB = typeof callback === 'function';
-        if(err){
-            let postDeleted1 = 'message' in err && err.message.substring(0,39)=='Unsupported get request. Object with ID';
-            let postDeleted2 = 'message' in err && err.message == 'No node specified';
-            if(postDeleted1){
-                console.log('WARN: Post deleted1. id: ' + id);
-                if(doCB) callback(null, -1);
-            } else if(postDeleted2){
-                console.log('WARN: Post deleted2. id: ' + id);
-                if(doCB) callback(null, -1);
-            }
-            else{
-                //console.log('Graph GET ID LIKES (function) Error Retry: ' + retry);
-                //retry request
-                if(!retry || retry < 1){
-                    getIDLikes(id, callback, retry?retry+1:1);
-                } else{
-                    //console.log(err);
-                    if(doCB) callback(err, respo);
-                }
-            }
-        }
-        else if('reactions' in respo && 'summary' in respo.reactions){
-            if(doCB)
-                callback(err, respo.reactions.summary.total_count);
-        }
-        else{
-            console.log('WARN: Post no longer exists?? SHOULD NOT HAPPEN ' + id);
-            if(doCB) callback(err, -1);
-        }
-    });
-}
 
 //updated_time definition: what is an update? updated_time changes upon a comment (or edit?). Does not update on LIKES
 //get data from FB and get correct number of likes and save all to db. Uses paging.
@@ -156,33 +121,27 @@ function getFeed(since, until){
                     //console.log(res.data[i].message);
                     //time needs to be reformatted
                     let type = res.data[i].type;
+                    
+                    let likes = 0;
+                    if('reactions' in res.data[i] && 'summary' in res.data[i].reactions) likes = res.data[i].reactions.summary.total_count;
+
                     let picURL = ((type == 'photo' || type == 'video') && 'full_picture' in res.data[i]) ? res.data[i].full_picture : '';
                     let curData = [res.data[i].id.split('_')[1], res.data[i].message, res.data[i].updated_time.split('+')[0],
-                        res.data[i].created_time.split('+')[0], 0, res.data[i].from.id, type, picURL];
+                        res.data[i].created_time.split('+')[0], likes, res.data[i].from.id, type, picURL];
+                    
                     //When values.length = res.data.length, insert to SQL.
-                    getIDLikes(curData[0], function(err, resp){
-                        if(err){
-                            console.log('Get Likes ERROR!');
-                            console.log(err);
-                            throw err;
-                        }
-                        else{
-                            curData[4] = resp;
-                            valuesCount++;
-                            //-1 when post no longer exists or something similar
-                            if(curData[4] != -1){
-                                //console.log(curData.toString());
-                                //Insert complete curData into values[] and update with one sql call
-                                values.push(curData);
-                                
-                                //sql query with all data
-                                if(valuesCount == res.data.length){
-                                    insertUpdateDB(values);
-                                }
-                            }
-                            else feedCount--; // post no longer exists, remove it from counter
-                        }
-                    });
+                    
+                    valuesCount++;
+
+                    //console.log(curData.toString());
+                    //Insert complete curData into values[] and update with one sql call
+                    values.push(curData);
+                    
+                    //sql query with all data
+                    if(valuesCount == res.data.length){
+                        insertUpdateDB(values);
+                    }
+                     
                 }
             }
             
@@ -247,6 +206,45 @@ function getPosts(getOldPosts, getNewPosts){
 } //END function getPosts
 
 
+//function to get number of reactions given an ID.
+//callback(err, response);
+//when post no longer exists, summary is not in respo. callback with -1 to preserve data? OR delete entry??
+function getIDLikes(id, callback, retry){
+    graph.setOptions(config.http.options).get(id + config.update.likesOptions, function (err, respo){
+        let doCB = typeof callback === 'function';
+        if(err){
+            let postDeleted1 = 'message' in err && err.message.substring(0,39)=='Unsupported get request. Object with ID';
+            let postDeleted2 = 'message' in err && err.message == 'No node specified';
+            if(postDeleted1){
+                console.log('WARN: Post deleted1. id: ' + id);
+                if(doCB) callback(null, -1);
+            } else if(postDeleted2){
+                console.log('WARN: Post deleted2. id: ' + id);
+                if(doCB) callback(null, -1);
+            }
+            else{
+                //console.log('Graph GET ID LIKES (function) Error Retry: ' + retry);
+                //retry request
+                if(!retry || retry < 1){
+                    getIDLikes(id, callback, retry?retry+1:1);
+                } else{
+                    //console.log(err);
+                    if(doCB) callback(err, respo);
+                }
+            }
+        }
+        else if('reactions' in respo && 'summary' in respo.reactions){
+            if(doCB)
+                callback(err, respo.reactions.summary.total_count);
+        }
+        else{
+            console.log('WARN: Post no longer exists?? SHOULD NOT HAPPEN ' + id);
+            if(doCB) callback(err, -1);
+        }
+    });
+}
+
+
 //since is lower bound, until is upper bound
 //Necessary since updated_time is not modified upon new like
 //Update LIKES of ALL EXISTING entries in DB between given time value(s) created_time datetime format.
@@ -288,7 +286,7 @@ function updateExistingFeedData(since, until, offsetInit){
 
             //make db query to get paginated list of id bounded by since and until
             function dbQueryUpdate(){
-                let sqlGetIDQuery = 'SELECT id FROM ' + config.db.tableName + datesBound +  ' ORDER BY updated_time desc LIMIT ' + offset +', ' + config.feed.limitCount;
+                let sqlGetIDQuery = 'SELECT id FROM ' + config.db.tableName + datesBound +  ' ORDER BY last_updated asc LIMIT ' + offset +', ' + config.feed.limitCount;
                 //console.log(sqlGetIDQuery);
                 sqlcon.query(sqlGetIDQuery, function(err, resp){
                     if(err){
@@ -316,7 +314,12 @@ function updateExistingFeedData(since, until, offsetInit){
                                 if(likesRes != -1){
                                     curGGot++;
                                     //likesRes is a number
-                                    let data = [this.id, likesRes];
+                                    
+                                    let today = new Date();
+                                    let formattedTime = today.getUTCFullYear() + '-' + (today.getUTCMonth()+1) + '-' + today.getUTCDate()
+                                        + ' ' + today.getUTCHours() + ':' + today.getUTCMinutes() + ':' + today.getUTCSeconds() + '.' + today.getUTCMilliseconds();
+
+                                    let data = [this.id, likesRes, formattedTime];
                                     values.push(data);
 
                                 } //end if
@@ -329,9 +332,10 @@ function updateExistingFeedData(since, until, offsetInit){
                                 //Check when all values have been received.
                                 //make db query to update id
                                 if(curGGot+curErr == resp.length){
-                                    let sqlUpdateLikes = 'INSERT INTO ' + config.db.tableName + ' (id, likes)'
+                                    let sqlUpdateLikes = 'INSERT INTO ' + config.db.tableName + ' (id, likes, last_updated)'
                                         + ' VALUES ? ON DUPLICATE KEY UPDATE '
-                                        + 'likes = VALUES(likes)';
+                                        + 'likes = VALUES(likes),'
+                                        + ' last_updated = VALUES(last_updated)';
                                     //console.log(sqlUpdateLikes);
                                     //console.log(values);
                                     sqlcon.query(sqlUpdateLikes, [values], function(err, res){
@@ -365,5 +369,5 @@ function updateExistingFeedData(since, until, offsetInit){
 /****END FUNCTIONS****/
 
 console.log('Beginning data scrape...');
-updateExistingFeedData(null, null, 0);
-//getPosts(false, true);
+//updateExistingFeedData(null, null, 0);
+getPosts(false, true);
