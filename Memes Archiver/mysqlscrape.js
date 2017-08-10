@@ -189,6 +189,7 @@ function getPosts(getOldPosts, getNewPosts){
             let dbSince = '';
             if(getNewPosts && 'updated_time' in res[0]){
                 console.log(res[0].updated_time);
+                if(res[0].updated_time != null)
                 dbSince = Date.parse(res[0].updated_time + ' GMT')/1000;
             }
 

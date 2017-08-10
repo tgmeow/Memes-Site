@@ -169,7 +169,7 @@ function processBoundYear(year){
 //function to get entries from database using a pooled connection, given a query and a callback function.
 //No error handling
 function pooledQuery(sqlQuery, callback){
-    console.log(sqlQuery); //debug ONLY
+    //console.log(sqlQuery); //debug ONLY
     sqlPool.getConnection(function(err, connection){
         connection.query(sqlQuery, function(err, res){
             connection.release();
@@ -271,7 +271,7 @@ function parseQueryParams(query){
     //query.time is not one of the TIME values, so try parsing it as an int to see if it is a valid time.
     else{
         const parseTest = sqlPool.escape(parseInt(query.time, 10));
-        console.log(parseTest);
+        //console.log(parseTest);
         if(isNaN(parseTest) || parseTest === Infinity
         || parseTest < config.queryBound.YEAR_MIN || parseTest > config.queryBound.YEAR_MAX)
         {
@@ -318,7 +318,7 @@ app.get('/data', function(req, res){
             //TEMP DEV ONLY
             res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3000');
             res.setHeader('Access-Control-Allow-Methods', 'GET');
-            console.log(resp);
+            //console.log(resp);
         res.setHeader('Content-Type', 'application/json');
         res.send(JSON.stringify({data: resp}));
     }
